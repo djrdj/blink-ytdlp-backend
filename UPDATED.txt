@@ -1,1 +1,0 @@
-Repository successfully updated with cookies support. All changes committed and ready to push to GitHub.

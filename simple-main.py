@@ -36,42 +36,8 @@ def get_rotated_user_agent() -> str:
         'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Safari/605.1.15',
         'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
         'Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:120.0) Gecko/20100101 Firefox/120.0',
-        'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36',
-        'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36',
     ]
     return random.choice(user_agents)
-
-def get_instagram_cookies() -> dict:
-    """
-    Get Instagram cookies in a format that yt-dlp can use
-    """
-    return {
-        'ig_did': '8F12345A-1234-1234-1234-123456789012',
-        'ig_nrcb': '1',
-        'csrftoken': 'random-csrf-token-123',
-        'sessionid': 'user-session-id',
-        'ds_user_id': 'user-id',
-        'mid': 'user-mid-token',
-        'rur': 'EAA',
-        'ig_app_id': '936619743392459',
-        'ig_ch': '5',
-        'ig_u': '1',
-    }
-
-def get_tiktok_cookies() -> dict:
-    """
-    Get TikTok cookies in a format that yt-dlp can use
-    """
-    return {
-        'ttwid': '1%7C1731345678901%7C0.1234567890',
-        'passport_csrf_token': 'random-csrf-token',
-        'passport_csrf_token_default': 'random-csrf-token-default',
-        'tt_webid': 'random-web-id-123',
-        'tt_webid_v2': 'random-web-id-v2-123',
-        'samesite': 'strict',
-        'msToken': 'ms-token-123',
-        'a_bp': '50',
-    }
 
 app = FastAPI(title="Blink Video Extraction Service")
 
@@ -102,18 +68,7 @@ async def root():
 
 @app.get("/health")
 async def health():
-    return {"status": "healthy", "enhanced": True}
-
-@app.get("/test-cookies")
-async def test_cookies():
-    """
-    Test endpoint to check cookie configuration
-    """
-    return {
-        "instagram_cookies": get_instagram_cookies(),
-        "tiktok_cookies": get_tiktok_cookies(),
-        "user_agents": [get_rotated_user_agent() for _ in range(3)]
-    }
+    return {"status": "healthy"}
 
 @app.post("/extract", response_model=ExtractionResponse)
 async def extract_video(request: ExtractionRequest):
@@ -133,34 +88,28 @@ async def extract_video(request: ExtractionRequest):
                 error=f"Unsupported URL. Please use TikTok, Instagram, Facebook, or X URLs."
             )
         
-        # Get platform-specific cookies
-        platform_cookies = None
-        if platform == 'instagram':
-            platform_cookies = get_instagram_cookies()
-        elif platform == 'tiktok':
-            platform_cookies = get_tiktok_cookies()
-        
         # Create temporary directory for downloads
         with tempfile.TemporaryDirectory() as temp_dir:
-            # Get enhanced options with platform and cookies
-            ydl_opts = get_standard_ytdlp_options(temp_dir, platform, platform_cookies)
+            # Platform-specific yt-dlp options
+            if platform == 'instagram':
+                # Enhanced options for Instagram
+                ydl_opts = get_instagram_ytdlp_options(temp_dir)
+            else:
+                # Standard options for other platforms
+                ydl_opts = get_standard_ytdlp_options(temp_dir)
             
-            # Try extraction with enhanced retry logic
-            max_attempts = 5 if platform in ['instagram', 'tiktok'] else 3
+            # Try extraction with retry logic
+            max_attempts = 5 if platform == 'instagram' else 3
             for attempt in range(max_attempts):
                 try:
-                    logger.info(f"Attempt {attempt + 1}: Extracting video info from {platform}...")
+                    logger.info(f"Attempt {attempt + 1}: Extracting video info...")
                     
-                    # Add randomized delay between attempts to avoid rate limiting
+                    # Add delay between attempts to avoid rate limiting
                     if attempt > 0:
-                        if platform in ['instagram', 'tiktok']:
-                            delay = random.uniform(3, 7)  # Randomized delay for better stealth
-                            logger.info(f"Waiting {delay:.1f}s before retry...")
-                            time.sleep(delay)
+                        if platform == 'instagram':
+                            time.sleep(5)  # Longer delay for Instagram
                         else:
-                            delay = random.uniform(1, 3)
-                            logger.info(f"Waiting {delay:.1f}s before retry...")
-                            time.sleep(delay)
+                            time.sleep(2)
                     
                     with yt_dlp.YoutubeDL(ydl_opts) as ydl:
                         info = ydl.extract_info(request.url, download=True)
@@ -240,70 +189,35 @@ async def extract_video(request: ExtractionRequest):
             error=str(e)
         )
 
-def get_standard_ytdlp_options(temp_dir: str, platform: str = 'generic', cookies: dict = None) -> dict:
+def get_standard_ytdlp_options(temp_dir: str) -> dict:
     """
-    Get enhanced yt-dlp options with cookies support
+    Get standard yt-dlp options for most platforms
     """
     user_agent = get_rotated_user_agent()
     video_path = os.path.join(temp_dir, 'video.%(ext)s')
     
-    # Base headers
-    base_headers = {
-        'User-Agent': user_agent,
-        'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8',
-        'Accept-Language': 'en-US,en;q=0.9',
-        'Accept-Encoding': 'gzip, deflate, br',
-        'Connection': 'keep-alive',
-        'Upgrade-Insecure-Requests': '1',
-        'Sec-Fetch-Dest': 'document',
-        'Sec-Fetch-Mode': 'navigate',
-        'Sec-Fetch-Site': 'none',
-        'Sec-Fetch-User': '?1',
-        'Cache-Control': 'max-age=0',
-    }
-    
-    # Platform-specific headers
-    if platform == 'instagram':
-        base_headers.update({
-            'Referer': 'https://www.instagram.com/',
-            'sec-ch-ua': '"Not_A Brand";v="8", "Chromium";v="120", "Google Chrome";v="120"',
-            'sec-ch-ua-mobile': '?0',
-            'sec-ch-ua-platform': '"Windows"',
-        })
-    elif platform == 'tiktok':
-        base_headers.update({
-            'Referer': 'https://www.tiktok.com/',
-            'sec-ch-ua': '"Not_A Brand";v="8", "Chromium";v="120", "Google Chrome";v="120"',
-            'sec-ch-ua-mobile': '?0',
-            'sec-ch-ua-platform': '"Windows"',
-        })
-    
-    options = {
-        'format': 'best[ext=mp4]/best',
+    return {
+        'format': 'best[ext=mp4]/best',  # Prefer MP4 format
         'outtmpl': video_path,
         'quiet': False,
         'no_warnings': False,
         'extract_flat': False,
         'nocheckcertificate': True,
         'user_agent': user_agent,
-        'http_headers': base_headers,
+        'http_headers': {
+            'User-Agent': user_agent,
+            'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+            'Accept-Language': 'en-us,en;q=0.5',
+            'Sec-Fetch-Mode': 'navigate',
+            'Connection': 'keep-alive',
+        },
         'writethumbnail': True,
         'writesubtitles': False,
-        'retries': 5,
-        'fragment_retries': 5,
-        'extractor_retries': 5,
+        'retries': 3,
+        'fragment_retries': 3,
+        'extractor_retries': 3,
         'skip_unavailable_fragments': True,
     }
-    
-    # Add cookies if provided
-    if cookies:
-        cookie_string = '; '.join([f'{k}={v}' for k, v in cookies.items()])
-        options['http_headers']['Cookie'] = cookie_string
-        logger.info(f"Using {len(cookies)} cookies for {platform}")
-    else:
-        logger.info("No cookies provided, using standard approach")
-    
-    return options
 
 def get_instagram_ytdlp_options(temp_dir: str) -> dict:
     """
